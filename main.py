@@ -138,11 +138,14 @@ def title_price(t):
         v=int(m.group(1).replace(",",""))
         if 100<=v<=50000000: return v
     return None
-def mkdeal(title,url,src,slabel,price=None,orig=None,img=None,cmt=0,likes=0,views=0):
+def mkdeal(title,url,src,slabel,price=None,orig=None,img=None,cmt=0,likes=0,views=0,
+           fb_domain=None,fb_cat=None,fb_cat_label=None):
     cl=classify(title)
     return {"title":title.strip(),"url":url,"image_url":img,"price":price,"original_price":orig,
-            "discount_rate":disc(price,orig),"domain":cl["domain"],"category":cl["category"],
-            "category_label":cl.get("category_label"),"source":src,"source_label":slabel,
+            "discount_rate":disc(price,orig),
+            "domain":cl["domain"] or fb_domain,"category":cl["category"] or fb_cat,
+            "category_label":cl.get("category_label") or fb_cat_label,
+            "source":src,"source_label":slabel,
             "comments":cmt,"likes":likes,"views":views}
 async def sget(url,params=None,headers=None,timeout=15,enc=None):
     for i in range(3):
@@ -233,8 +236,15 @@ async def crawl_quasarzone():
 # ===== 🕷️ 알리익스프레스 =====
 async def crawl_ali():
     deals=[]
-    kws=["baby stroller","baby diaper","baby bottle","baby toy set","korean ramen bulk","snack box korea"]
-    for kw in kws:
+    kw_map=[
+        ("baby stroller","baby","stroller","유모차/카시트"),
+        ("baby diaper","baby","diaper","기저귀/물티슈"),
+        ("baby bottle","baby","formula","분유/이유식"),
+        ("baby toy set","baby","toy","장난감/교구"),
+        ("korean ramen bulk","food","processed","가공식품"),
+        ("snack box korea","food","snack","간식/음료"),
+    ]
+    for kw,dom,cat,cat_label in kw_map:
         try:
             r=await sget(f"https://ko.aliexpress.com/w/wholesale-{kw.replace(' ','-')}.html",
                          headers=hdr("https://ko.aliexpress.com/"),timeout=20)
@@ -255,7 +265,8 @@ async def crawl_ali():
                     ie=item.select_one("img")
                     img=ie.get("src","") if ie else None
                     if img and img.startswith("//"): img=f"https:{img}"
-                    deals.append(mkdeal(f"[알리] {t}",url,"aliexpress","알리익스프레스",price=price,orig=orig,img=img))
+                    deals.append(mkdeal(f"[알리] {t}",url,"aliexpress","알리익스프레스",price=price,orig=orig,img=img,
+                        fb_domain=dom,fb_cat=cat,fb_cat_label=cat_label))
                 except: continue
             await asyncio.sleep(random.uniform(2,4))
         except Exception as e: log.warning(f"알리 '{kw}': {e}")
@@ -267,11 +278,37 @@ async def crawl_naver():
         log.warning("⚠️ 네이버 API 키 미설정 → 건너뜀")
         return []
     deals=[]
-    kws=["유모차 특가","카시트 할인","분유 세트","기저귀 대용량","물티슈 대량",
-         "아기 장난감","이유식 할인","사골곰탕 대용량","라면 박스","만두 대용량",
-         "과자 박스","삼겹살 특가","밀키트 할인","주스 대량"]
+    # 키워드별로 카테고리를 미리 지정
+    kw_map=[
+        ("유모차","baby","stroller","유모차/카시트"),
+        ("카시트","baby","stroller","유모차/카시트"),
+        ("아기띠 힙시트","baby","stroller","유모차/카시트"),
+        ("분유","baby","formula","분유/이유식"),
+        ("이유식","baby","formula","분유/이유식"),
+        ("젖병","baby","formula","분유/이유식"),
+        ("기저귀","baby","diaper","기저귀/물티슈"),
+        ("물티슈 대량","baby","diaper","기저귀/물티슈"),
+        ("아기 장난감","baby","toy","장난감/교구"),
+        ("레고 듀플로","baby","toy","장난감/교구"),
+        ("유아 교구","baby","toy","장난감/교구"),
+        ("아기 로션","baby","babygear","유아용품"),
+        ("젖병 소독기","baby","babygear","유아용품"),
+        ("사골곰탕","food","soup","국/탕/찌개"),
+        ("갈비탕","food","soup","국/탕/찌개"),
+        ("삼계탕","food","soup","국/탕/찌개"),
+        ("라면 박스","food","processed","가공식품"),
+        ("만두 대용량","food","processed","가공식품"),
+        ("즉석밥","food","processed","가공식품"),
+        ("밀키트","food","processed","가공식품"),
+        ("과자 박스","food","snack","간식/음료"),
+        ("주스 대량","food","snack","간식/음료"),
+        ("커피 대용량","food","snack","간식/음료"),
+        ("삼겹살 특가","food","fresh","신선식품"),
+        ("한우","food","fresh","신선식품"),
+        ("계란 대란","food","fresh","신선식품"),
+    ]
     headers={**hdr(),"X-Naver-Client-Id":NAVER_CLIENT_ID,"X-Naver-Client-Secret":NAVER_CLIENT_SECRET}
-    for kw in kws:
+    for kw,dom,cat,cat_label in kw_map:
         try:
             r=await sget("https://openapi.naver.com/v1/search/shop.json",
                          params={"query":kw,"display":15,"sort":"date"},headers=headers)
@@ -280,8 +317,18 @@ async def crawl_naver():
                 mall=item.get("mallName","")
                 p=int(item.get("lprice",0)) or None
                 hp=int(item.get("hprice",0)) or None
-                deals.append(mkdeal(f"[{mall}] {t}" if mall else t, item.get("link",""),
-                    "naver","네이버쇼핑",price=p,orig=hp,img=item.get("image")))
+                title=f"[{mall}] {t}" if mall else t
+                # classify 시도, 실패하면 키워드 기반 카테고리 사용
+                cl=classify(title)
+                d_dom=cl["domain"] or dom
+                d_cat=cl["category"] or cat
+                d_label=cl.get("category_label") or cat_label
+                deal={"title":title.strip(),"url":item.get("link",""),"image_url":item.get("image"),
+                       "price":p,"original_price":hp,"discount_rate":disc(p,hp),
+                       "domain":d_dom,"category":d_cat,"category_label":d_label,
+                       "source":"naver","source_label":"네이버쇼핑",
+                       "comments":0,"likes":0,"views":0}
+                deals.append(deal)
             await asyncio.sleep(0.3)
         except Exception as e: log.warning(f"네이버 '{kw}': {e}")
     return deals
@@ -289,8 +336,15 @@ async def crawl_naver():
 # ===== 🕷️ 쿠팡 =====
 async def crawl_coupang():
     deals=[]
-    kws=["유모차 특가","기저귀 대용량","분유 세트","곰탕 대용량","라면 박스","과자 대용량"]
-    for kw in kws:
+    kw_map=[
+        ("유모차","baby","stroller","유모차/카시트"),
+        ("기저귀 대용량","baby","diaper","기저귀/물티슈"),
+        ("분유","baby","formula","분유/이유식"),
+        ("곰탕 대용량","food","soup","국/탕/찌개"),
+        ("라면 박스","food","processed","가공식품"),
+        ("과자 대용량","food","snack","간식/음료"),
+    ]
+    for kw,dom,cat,cat_label in kw_map:
         try:
             r=await sget("https://www.coupang.com/np/search",
                          params={"q":kw,"channel":"user"},headers=hdr("https://www.coupang.com/"))
@@ -307,7 +361,8 @@ async def crawl_coupang():
                 img=ie.get("src","") if ie else ""
                 if img.startswith("//"): img=f"https:{img}"
                 deals.append(mkdeal(ne.get_text(strip=True),url,"coupang","쿠팡",
-                    price=price,orig=orig,img=img,cmt=_nums(item.select_one(".rating-total-count"))))
+                    price=price,orig=orig,img=img,cmt=_nums(item.select_one(".rating-total-count")),
+                    fb_domain=dom,fb_cat=cat,fb_cat_label=cat_label))
             await asyncio.sleep(random.uniform(3,6))
         except Exception as e: log.warning(f"쿠팡 '{kw}': {e}")
     return deals
@@ -315,9 +370,21 @@ async def crawl_coupang():
 # ===== 🕷️ 카카오쇼핑 (톡딜) =====
 async def crawl_kakao():
     deals=[]
-    kws=["유모차","카시트","분유","기저귀","물티슈","장난감",
-         "곰탕","라면","만두","과자","삼겹살","밀키트"]
-    for kw in kws:
+    kw_map=[
+        ("유모차","baby","stroller","유모차/카시트"),
+        ("카시트","baby","stroller","유모차/카시트"),
+        ("분유","baby","formula","분유/이유식"),
+        ("기저귀","baby","diaper","기저귀/물티슈"),
+        ("물티슈","baby","diaper","기저귀/물티슈"),
+        ("장난감","baby","toy","장난감/교구"),
+        ("곰탕","food","soup","국/탕/찌개"),
+        ("라면","food","processed","가공식품"),
+        ("만두","food","processed","가공식품"),
+        ("과자","food","snack","간식/음료"),
+        ("삼겹살","food","fresh","신선식품"),
+        ("밀키트","food","processed","가공식품"),
+    ]
+    for kw,dom,cat,cat_label in kw_map:
         try:
             r=await sget("https://store.kakao.com/search/result",
                          params={"keyword":kw,"tab":"PRODUCT","sortType":"RECENT"},
@@ -341,7 +408,8 @@ async def crawl_kakao():
                     img=ie.get("src","") if ie else None
                     if img and img.startswith("//"): img=f"https:{img}"
                     deals.append(mkdeal(f"[톡딜] {t}",url,"kakao","카카오쇼핑",
-                        price=price,orig=orig,img=img))
+                        price=price,orig=orig,img=img,
+                        fb_domain=dom,fb_cat=cat,fb_cat_label=cat_label))
                 except: continue
             await asyncio.sleep(random.uniform(2,4))
         except Exception as e: log.warning(f"카카오 '{kw}': {e}")
