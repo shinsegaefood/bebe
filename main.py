@@ -312,12 +312,47 @@ async def crawl_coupang():
         except Exception as e: log.warning(f"쿠팡 '{kw}': {e}")
     return deals
 
+# ===== 🕷️ 카카오쇼핑 (톡딜) =====
+async def crawl_kakao():
+    deals=[]
+    kws=["유모차","카시트","분유","기저귀","물티슈","장난감",
+         "곰탕","라면","만두","과자","삼겹살","밀키트"]
+    for kw in kws:
+        try:
+            r=await sget("https://store.kakao.com/search/result",
+                         params={"keyword":kw,"tab":"PRODUCT","sortType":"RECENT"},
+                         headers=hdr("https://store.kakao.com/"))
+            soup=BeautifulSoup(r.text,"lxml")
+            for item in soup.select("[class*='product-card'], [class*='item-card'], .search-product")[:10]:
+                try:
+                    te=item.select_one("[class*='title'], [class*='name'], h3, .tit")
+                    if not te: continue
+                    t=te.get_text(strip=True)
+                    if not t: continue
+                    le=item.select_one("a[href]")
+                    href=le.get("href","") if le else ""
+                    url=href if href.startswith("http") else f"https://store.kakao.com{href}"
+                    pe=item.select_one("[class*='sale-price'], [class*='discount'], .price-sale")
+                    price=pprice(pe.get_text()) if pe else None
+                    oe=item.select_one("[class*='origin'], [class*='before'], .price-origin")
+                    orig=pprice(oe.get_text()) if oe else None
+                    de=item.select_one("[class*='rate'], [class*='percent']")
+                    ie=item.select_one("img")
+                    img=ie.get("src","") if ie else None
+                    if img and img.startswith("//"): img=f"https:{img}"
+                    deals.append(mkdeal(f"[톡딜] {t}",url,"kakao","카카오쇼핑",
+                        price=price,orig=orig,img=img))
+                except: continue
+            await asyncio.sleep(random.uniform(2,4))
+        except Exception as e: log.warning(f"카카오 '{kw}': {e}")
+    return deals
+
 # ===== 크롤링 실행 =====
 async def run_all():
     log.info("="*50)
     log.info(f"🕷️ 크롤링 시작 [{datetime.now().strftime('%H:%M:%S')}]")
     crawlers=[("뽐뿌",crawl_ppomppu),("펨코",crawl_fmkorea),("퀘사이존",crawl_quasarzone),
-              ("알리",crawl_ali),("네이버쇼핑",crawl_naver),("쿠팡",crawl_coupang)]
+              ("알리",crawl_ali),("네이버쇼핑",crawl_naver),("쿠팡",crawl_coupang),("카카오쇼핑",crawl_kakao)]
     tf,tn=0,0
     for name,func in crawlers:
         try:
@@ -349,7 +384,7 @@ app=FastAPI(title="🔥 베베딜 API v2",lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 @app.get("/")
-def root(): return {"service":"🔥 베베딜 API v2","docs":"/docs","sources":["뽐뿌","펨코","퀘사이존","알리","네이버쇼핑","쿠팡"]}
+def root(): return {"service":"🔥 베베딜 API v2","docs":"/docs","sources":["뽐뿌","펨코","퀘사이존","알리","네이버쇼핑","쿠팡","카카오쇼핑"]}
 
 @app.get("/api/deals")
 def api_deals(domain:str=None,category:str=None,source:str=None,search:str=None,
@@ -382,6 +417,7 @@ def api_sources():
         {"key":"aliexpress","label":"알리익스프레스","api_key":False},
         {"key":"naver","label":"네이버쇼핑","api_key":True,"note":"NAVER_CLIENT_ID 필요"},
         {"key":"coupang","label":"쿠팡","api_key":False,"note":"봇 차단 가능성"},
+        {"key":"kakao","label":"카카오쇼핑","api_key":False},
     ]}
 
 @app.get("/api/health")
