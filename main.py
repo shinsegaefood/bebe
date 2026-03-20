@@ -108,15 +108,26 @@ CATS={
     "babycare":{"d":"baby","l":"위생/건강","k":["아기로션","유아세제","아기비누","아기샴푸","젖병소독기","체온계","콧물흡입기","아기칫솔","선크림","보습"]},
     "babyfurniture":{"d":"baby","l":"가구/침구","k":["아기침대","유아침대","범퍼","아기이불","아기베개","트립트랩","하이체어","아기식탁"]},
     # 식품
-    "soup":{"d":"food","l":"국/탕/찌개","k":["국","탕","찌개","곰탕","사골","설렁탕","갈비탕","삼계탕","닭곰탕","육개장","미역국","된장찌개","김치찌개","순두부","부대찌개","비비고","하림"]},
+    "soup":{"d":"food","l":"국/탕/찌개","k":["곰탕","사골곰탕","설렁탕","갈비탕","삼계탕","닭곰탕","육개장","미역국","된장찌개","김치찌개","순두부찌개","부대찌개","떡국","갈비찜"]},
     "processed":{"d":"food","l":"가공식품","k":["라면","진라면","신라면","불닭","만두","냉동","통조림","참치캔","스팸","김","반찬","밀키트","즉석밥","컵밥","햄","소시지","레토르트","카레"]},
     "snack":{"d":"food","l":"간식/음료","k":["과자","스낵","초콜릿","사탕","젤리","쿠키","음료","주스","우유","두유","커피","차","꼬북칩","포카칩","견과","시리얼","프로틴","에너지바"]},
     "fresh":{"d":"food","l":"신선식품","k":["소고기","돼지고기","닭고기","차돌박이","삼겹살","갈비","안심","등심","한우","과일","사과","딸기","채소","쌀","계란","달걀","생선","연어","새우","오징어"]},
-    "health":{"d":"food","l":"건강식품","k":["비타민","유산균","프로바이오틱스","오메가","홍삼","영양제","콜라겐","루테인","칼슘","철분","마그네슘","종합비타민"]},
-    "bakery":{"d":"food","l":"빵/유제품","k":["빵","식빵","베이글","크로와상","치즈","버터","요거트","요구르트","우유","크림"]},
+    "health":{"d":"food","l":"건강식품","k":["종합비타민","유산균","프로바이오틱스","오메가3","홍삼정","홍삼액","홍삼스틱","영양제","루테인","칼슘제","철분제","마그네슘"]},
+    "bakery":{"d":"food","l":"빵/유제품","k":["식빵","베이글","크로와상","치즈","버터","요거트","요구르트","크림치즈"]},
 }
+# 제외 키워드: 이게 포함되면 무조건 제외 (화장품, 주방용품, 가전 등)
+EXCLUDE=["세럼","에센스","토너","스킨","파운데이션","마스크팩","화장품","뷰티","클렌징",
+    "포스터","스티커","월데코","벽지","액자","인테리어",
+    "들통","냄비","프라이팬","그릇","식기","수저","텀블러","보온병",
+    "케이스","필름","거치대","충전기","이어폰","마우스패드","키보드",
+    "강아지","고양이","반려","사료","pet","dog","cat",
+    "serum","cream","lotion","moistur","skin care","facial","beauty",
+    "poster","wall art","decal","sticker","frame"]
 def classify(title):
-    t=title.lower();best,bs=None,0
+    t=title.lower()
+    # 제외 키워드 체크
+    if any(x in t for x in EXCLUDE):return {"domain":None,"category":None,"category_label":None}
+    best,bs=None,0
     for k,v in CATS.items():
         s=sum(len(kw) for kw in v["k"] if kw in t)
         if s>bs:bs,best=s,k
@@ -152,6 +163,13 @@ def title_price(t):
     return None
 def mkdeal(title,url,src,slabel,price=None,orig=None,img=None,cmt=0,likes=0,views=0,
            fb_domain=None,fb_cat=None,fb_cat_label=None):
+    # 제외 키워드 체크 - fallback보다 우선
+    tl=title.lower()
+    if any(x in tl for x in EXCLUDE):
+        return {"title":title.strip(),"url":url,"image_url":img,"price":price,"original_price":orig,
+                "discount_rate":disc(price,orig),
+                "domain":None,"category":None,"category_label":None,
+                "source":src,"source_label":slabel,"comments":cmt,"likes":likes,"views":views}
     cl=classify(title)
     return {"title":title.strip(),"url":url,"image_url":img,"price":price,"original_price":orig,
             "discount_rate":disc(price,orig),
@@ -282,9 +300,9 @@ async def crawl_naver():
         ("삼겹살 특가","food","fresh","신선식품"),
         ("한우 세트","food","fresh","신선식품"),
         ("계란 30구","food","fresh","신선식품"),
-        ("비타민 세트","food","health","건강식품"),
-        ("유산균","food","health","건강식품"),
-        ("홍삼","food","health","건강식품"),
+        ("종합비타민 세트","food","health","건강식품"),
+        ("유산균 프로바이오틱스","food","health","건강식품"),
+        ("홍삼스틱","food","health","건강식품"),
     ]
     headers={**hdr(),"X-Naver-Client-Id":NAVER_CLIENT_ID,"X-Naver-Client-Secret":NAVER_CLIENT_SECRET}
     for kw,dom,cat,cat_label in kw_map:
@@ -295,10 +313,14 @@ async def crawl_naver():
                 t=re.sub(r"<[^>]+>","",item.get("title",""))
                 if not t:continue
                 mall=item.get("mallName","")
-                # 🔧 핵심 수정: safe_int로 빈 문자열 처리
                 p=safe_int(item.get("lprice"))
                 hp=safe_int(item.get("hprice"))
                 title=f"[{mall}] {t}" if mall else t
+                # 🔧 가격 없는 상품 제외
+                if not p:continue
+                # 🔧 제외 키워드 체크 (세럼, 냄비 등 관련없는 상품)
+                tl=title.lower()
+                if any(x in tl for x in EXCLUDE):continue
                 cl=classify(title)
                 deal={"title":title.strip(),"url":item.get("link",""),"image_url":item.get("image"),
                        "price":p,"original_price":hp,"discount_rate":disc(p,hp) if p and hp else 0,
@@ -378,7 +400,7 @@ async def run_all():
     log.info("="*50)
     log.info(f"🕷️ 크롤링 시작 [{datetime.now().strftime('%H:%M:%S')}]")
     crawlers=[("뽐뿌",crawl_ppomppu),("펨코",crawl_fmkorea),("퀘사이존",crawl_quasarzone),
-              ("네이버쇼핑",crawl_naver),("카카오쇼핑",crawl_kakao)]
+              ("네이버쇼핑",crawl_naver)]
     tf,tn=0,0
     for name,func in crawlers:
         try:
@@ -400,7 +422,7 @@ async def lifespan(app:FastAPI):
     init_db()
     scheduler.add_job(run_all,"interval",minutes=CRAWL_INTERVAL)
     scheduler.start()
-    log.info(f"🔥 베베딜 v3 시작! 간격:{CRAWL_INTERVAL}분 | 소스: 뽐뿌,펨코,퀘사이존,네이버쇼핑,카카오쇼핑")
+    log.info(f"🔥 베베딜 v3 시작! 간격:{CRAWL_INTERVAL}분 | 소스: 뽐뿌,펨코,퀘사이존,네이버쇼핑")
     await asyncio.sleep(10)
     asyncio.create_task(run_all())
     yield
@@ -410,7 +432,7 @@ app=FastAPI(title="🔥 베베딜 API v3",lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 @app.get("/")
-def root():return {"service":"🔥 베베딜 API v3","docs":"/docs","sources":["뽐뿌","펨코","퀘사이존","네이버쇼핑","카카오쇼핑"]}
+def root():return {"service":"🔥 베베딜 API v3","docs":"/docs","sources":["뽐뿌","펨코","퀘사이존","네이버쇼핑"]}
 @app.get("/api/deals")
 def api_deals(domain:str=None,category:str=None,source:str=None,search:str=None,
               sort:str="latest",page:int=Query(1,ge=1),limit:int=Query(20,ge=1,le=100)):
@@ -436,7 +458,6 @@ def api_sources():
         {"key":"fmkorea","label":"펨코"},
         {"key":"quasarzone","label":"퀘사이존"},
         {"key":"naver","label":"네이버쇼핑","note":"API 키 필요"},
-        {"key":"kakao","label":"카카오쇼핑"},
     ]}
 @app.get("/api/health")
 def api_health():
